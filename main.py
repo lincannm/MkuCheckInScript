@@ -1,0 +1,232 @@
+""" https://blog.linc.work/article/dfd1638c.html """
+
+import logging
+
+""" --- 基本配置 --- """
+
+USERNAME="xxx"                  # 用户名
+PASSWORD="xxx"                  # 密码
+
+LOGGER_LEVEL=logging.DEBUG      # 日志级别（目前只有 DEBUG 级别日志）
+# LOGGER_LEVEL=logging.INFO     # 日志级别（无 DEBUG 日志）
+IS_VERIFY_SSL=True              # requests 库是否验证 SSL 证书，Charles 抓包用
+
+""" -------------- """
+
+import re
+import sys
+import os
+from datetime import date
+
+if sys.platform == "win32":
+    os.system("")
+
+from Crypto.PublicKey import RSA
+from Crypto.Cipher import PKCS1_v1_5
+import requests
+from requests import Response
+import base64
+
+
+class ColoredFormatter(logging.Formatter):
+    """ 带颜色的日志格式化器 """
+    # ANSI 颜色代码
+    RESET="\033[0m"
+    TIME_COLOR="\033[36m"  # 青色 - 时间
+    LEVEL_COLORS={
+        logging.DEBUG: "\033[34m",  # 蓝色
+        logging.INFO: "\033[32m",  # 绿色
+        logging.WARNING: "\033[33m",  # 黄色
+        logging.ERROR: "\033[31m",  # 红色
+        logging.CRITICAL: "\033[41m",  # 红色背景
+    }
+    def format(self,record):
+        # 获取日志级别对应的颜色
+        level_color=self.LEVEL_COLORS.get(record.levelno,self.RESET)
+        # 格式化时间
+        time_str=self.formatTime(record,self.datefmt)
+        colored_time=f"{self.TIME_COLOR}{time_str}{self.RESET}"
+        # 格式化日志级别
+        colored_level=f"{level_color}{record.levelname}{self.RESET}"
+        return f"{colored_level} - {colored_time}: {record.getMessage()}"
+# Logger 配置
+logger=logging.getLogger("MkuCheckInScript")
+logger.setLevel(LOGGER_LEVEL)
+logging_handler=logging.StreamHandler(sys.stdout)
+logging_handler.setFormatter(ColoredFormatter())
+logger.addHandler(logging_handler)
+
+# 使用rsa把密码加密，方便请求携带
+rsa_key="""-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2g9Mhv3s+exdz7iV+M/oUheb8Tz3CCtMjXUBOmLxHzjEG6V0DcZGyNIwuIcPJeavRzdC+Hs01SneJ/5AZHQQVg66+vBdjBqahsv2Ibts9t6OOdg8YaVE8te26AQR3ISLxzERf62gEmO6Zgkl45unvt3BM4uy+60HXmuFC8i/jhKJW1Ax8gZddnjFs5Yx2fwHqx+8YTqd8kN3ovZaHSfwp31ioJwoYyPxZRlRDq0J+p3uQs/A8BcZm5yqPwWMCL18fleChin9Z3VX1VZfURYLnFHgpCqKWraU0z4WncB3MS9QEF+kYucCT+e9kpsrUhBlmpz1BZKjX/bI3qVcJw1CnQIDAQAB
+-----END PUBLIC KEY-----"""
+rsa_public_key=RSA.import_key(rsa_key)
+cipher_rsa=PKCS1_v1_5.new(rsa_public_key)
+encrypted_password_byte=cipher_rsa.encrypt(PASSWORD.encode('utf-8'))
+PASSWORD_encoded="__RSA__"+base64.b64encode(encrypted_password_byte).decode('utf-8')
+
+# requests Session 配置
+session=requests.Session()
+session.headers.update({
+    # "sec-ch-ua": '"Chromium";v="142", "Microsoft Edge";v="142", "Not_A Brand";v="99"',
+    # "sec-ch-ua-mobile": "?0",
+    # "sec-ch-ua-platform": "Windows",
+    # "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0"
+})
+session.verify=IS_VERIFY_SSL
+def response_hook(response: Response,*args,**kwargs):
+    lines = response.text.splitlines()
+    if len(lines) > 12:
+        response_text = '\n'.join(lines[:12]) + f"\n<< more {len(lines) - 12} lines >>"
+    else:
+        response_text = '\n'.join(lines)
+    logger.debug(f"Response from {response.url} [{response.status_code}] {response_text}")
+
+session.hooks["response"]=response_hook
+
+
+""" 验证手机 """
+
+print("检测是否需要双因素验证... ",end='')
+resp_mfa_detect=session.post("https://cas.mku.edu.cn/cas/mfa/detect",
+                              data={
+                                  'username': USERNAME,
+                                  'password': PASSWORD_encoded
+                              },
+                              headers={
+                                  "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+                              })
+resp_mfa_detect_data=resp_mfa_detect.json()
+print("是" if resp_mfa_detect_data["data"]["need"] else "否")
+
+# 如果需要手机验证码验证
+if resp_mfa_detect_data["data"]["need"]:
+    resp_securephone=session.get("https://cas.mku.edu.cn/cas/mfa/initByType/securephone",
+                params={
+                    "state": resp_mfa_detect_data["data"]["state"]
+                })
+    resp_securephone_json=resp_securephone.json()
+    gid=resp_securephone_json["data"]["gid"]
+    phone_number=resp_securephone_json["data"]["securePhone"]
+    is_want_to_send=input(f"登录需要向 {phone_number} 发送短信验证码，是否继续？(y/N): ")
+    if not is_want_to_send.lower() == 'y':
+        print("用户取消发送验证码，结束登录")
+        sys.exit(0)
+    print("正在发送验证码...")
+    resp_securephone_send=session.post("https://cas.mku.edu.cn/attest/api/guard/securephone/send",
+                                       json={
+                                           "gid":gid
+                                       })
+    while True:
+        verify_code=input("输入收到的验证码：")
+        resp_securephone_valid=session.post("https://cas.mku.edu.cn/attest/api/guard/securephone/valid",
+                                            json={
+                                                "code":verify_code,
+                                                "gid":gid
+                                            })
+        resp_securephone_valid_status=resp_securephone_valid.json()["data"]["status"]
+        if resp_securephone_valid_status==3:
+            print("短信验证失败")
+            continue
+        elif resp_securephone_valid_status==2:
+            print("短信验证成功")
+            break
+        else:
+            print(f"未知错误，status == {resp_securephone_valid_status}")
+            continue
+
+""" 登录 """
+
+print("登录 CAS...")
+# 获取表单execution字段
+resp_web_page=session.get("https://cas.mku.edu.cn/cas/login")
+resp_web_page_html=resp_web_page.text
+try:
+    execution = re.search(
+                  r'name="execution" value="([^"]+)"', resp_web_page_html
+              ).group(1)
+except AttributeError:
+    logger.error("无法从登录页面提取 execution")
+    sys.exit(1)
+
+# 登录
+resp_login=session.post("https://cas.mku.edu.cn/cas/login",
+                        data={
+                            "username": USERNAME,
+                            "password": PASSWORD_encoded,
+                            "captcha": "",
+                            "currentMenu": "1",
+                            "failN": "-1",
+                            "mfaState": resp_mfa_detect_data["data"]["state"],
+                            "execution": execution,
+                            "_eventId": "submit",
+                            "geolocation": "",
+                            "fpVisitorId": "",
+                            "submit1": "Login1"
+                        },
+                        headers={
+                            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+                        })
+resp_login_status_code=resp_login.status_code
+if not resp_login_status_code == 200:
+    print(f"登录失败，status_code=={resp_login_status_code}")
+    if resp_login_status_code == 401:
+        print("原因：用户名或密码错误")
+    sys.exit(1)
+
+# 用户认证，让CAS系统自己带ticket进行302跳转到service指定服务（打卡服务）
+print("登录学工系统...")
+# resp_login_302=session.post("https://cas.mku.edu.cn/cas/login",
+#                         params={
+#                             "service":"https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_index.do"
+#                         },
+#                         allow_redirects=True)
+# 上下请求等效，下面这种请求会302至上面这种请求
+resp_login_302=session.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_index.do",
+                        allow_redirects=True)
+
+print(f'获取到 JSESSIONID: {session.cookies.get("JSESSIONID",domain="xgyd.mku.edu.cn")}')
+# print(f'JSESSIONID: {session.cookies.get_dict()}')
+# 获取打卡需要的xsid
+print("获取 xsid...")
+resp_mrdk_edit=session.get("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_edit")
+resp_mrdk_edit_html=resp_mrdk_edit.text
+xsid = re.search(
+                  r'id="xsid" value="([^"]+)"', resp_mrdk_edit_html
+              ).group(1)
+print(f"获取到 xsid: {xsid}")
+
+""" 打卡 """
+
+def signup():
+    form_data = {
+        "id": "",
+        "xsid": xsid,
+        "jd": 118.47673,
+        "wd": 25.03694,
+        "dqszd": 350583,
+        "drsfzxid": 1,
+        "sbrq": date.today().strftime('%Y-%m-%d'),
+        "dqszdmc": "福建省泉州市南安市",
+        "tw": 36.5,
+        "dqszdxxdz": "康美校区",
+        "ycms": "",
+        "twid": 1,
+        "jzkid": 1
+    }
+    logger.debug(f"form_data = {form_data}")
+    is_want_to_sign=input("是否要打卡？ (y/N): ")
+    if not is_want_to_sign.lower() == 'y':
+        print("用户取消打卡，结束程序")
+        sys.exit(0)
+    resp_mrdk_save=session.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_save.do",
+                                data=form_data)
+    resp_mrdk_save_data=resp_mrdk_save.json()
+    if resp_mrdk_save_data["ret"]=="ok":
+        print("打卡成功")
+    elif resp_mrdk_save_data["ret"]=="more":
+        print("重复打卡，今日已打卡")
+    else:
+        print(f"打卡接口返回未知结果：ret == {resp_mrdk_save_data["ret"]}")
+
+signup()
