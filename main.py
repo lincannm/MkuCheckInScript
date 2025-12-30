@@ -16,7 +16,8 @@ IS_VERIFY_SSL=True              # requests 库是否验证 SSL 证书，Charles 
 import re
 import sys
 import os
-from datetime import date
+from datetime import date, datetime
+from playwright.sync_api import sync_playwright
 
 if sys.platform == "win32":
     os.system("")
@@ -198,6 +199,60 @@ print(f"获取到 xsid: {xsid}")
 
 """ 打卡 """
 
+def take_screenshot(session: requests.Session, output_dir: str = ".") -> str | None:
+    """
+    使用 Playwright 截取打卡记录页面截图
+
+    Args:
+        session: 已登录的 requests Session 对象
+        output_dir: 截图保存目录
+    Returns:
+        截图文件路径，失败返回 None
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    screenshot_path = os.path.join(output_dir, f"screenshot_{timestamp}.png")
+
+    # 转换 cookies 为 Playwright 格式
+    playwright_cookies = []
+    for cookie in session.cookies:
+        pw_cookie = {
+            "name": cookie.name,
+            "value": cookie.value,
+            "domain": cookie.domain if cookie.domain else ".mku.edu.cn",
+            "path": cookie.path if cookie.path else "/",
+        }
+        if cookie.expires:
+            pw_cookie["expires"] = cookie.expires
+        if cookie.secure:
+            pw_cookie["secure"] = True
+        playwright_cookies.append(pw_cookie)
+
+    logger.debug(f"Playwright cookies: {playwright_cookies}")
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(**p.devices["Pixel 5"])
+            context.add_cookies(playwright_cookies)
+
+            page = context.new_page()
+            page.goto(
+                "https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_index.do",
+                wait_until="networkidle"
+            )
+            page.wait_for_timeout(1000)  # 等待渲染完成
+            page.screenshot(path=screenshot_path, full_page=True)
+
+            context.close()
+            browser.close()
+
+            print(f"截图已保存: {screenshot_path}")
+            return screenshot_path
+
+    except Exception as e:
+        logger.error(f"截图失败: {e}")
+        return None
+
 def signup():
     form_data = {
         "id": "",
@@ -230,3 +285,6 @@ def signup():
         print(f"打卡接口返回未知结果：ret == {resp_mrdk_save_data["ret"]}")
 
 signup()
+
+print("正在截取打卡记录页面...")
+take_screenshot(session,output_dir="./screenshot/")

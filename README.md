@@ -1,10 +1,17 @@
 对MKU的学工系统晚打卡API进行逆向，实现免定位自动打卡。
 
+功能：
+
+- [x] 自动打卡
+- [x] 自动截取打卡记录页面
+
 # QuickStart
 
 ## 安装
 
-### uv
+### 1. 安装依赖
+
+#### uv
 
 本项目使用uv管理依赖。
 
@@ -13,12 +20,18 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 uv sync
 ```
 
-### pip
+#### pip
 
 也可以用pip从requirements.txt安装依赖
 
 ```shell
 pip install -r requirements.txt
+```
+
+### 2. 为Playwright安装浏览器（截图功能需要）
+
+```shell
+playwright install chromium
 ```
 
 ## 配置
