@@ -85,6 +85,15 @@ def response_hook(response: Response,*args,**kwargs):
 
 session.hooks["response"]=response_hook
 
+def get_choose(msg: str):
+    while True:
+        inp=input(f"{msg} (Y/n): ")
+        if inp.lower()=='y' or inp=='':
+            return True
+        elif inp.lower()=='n':
+            return False
+        else:
+            continue
 
 """ 验证手机 """
 
@@ -109,8 +118,8 @@ if resp_mfa_detect_data["data"]["need"]:
     resp_securephone_json=resp_securephone.json()
     gid=resp_securephone_json["data"]["gid"]
     phone_number=resp_securephone_json["data"]["securePhone"]
-    is_want_to_send=input(f"登录需要向 {phone_number} 发送短信验证码，是否继续？(y/N): ")
-    if not is_want_to_send.lower() == 'y':
+    is_want_to_send=get_choose(f"登录需要向 {phone_number} 发送短信验证码，是否继续？")
+    if not is_want_to_send:
         print("用户取消发送验证码，结束登录")
         sys.exit(0)
     print("正在发送验证码...")
@@ -199,6 +208,39 @@ print(f"获取到 xsid: {xsid}")
 
 """ 打卡 """
 
+def signup():
+    form_data = {
+        "id": "",
+        "xsid": xsid,
+        "jd": 118.47673,
+        "wd": 25.03694,
+        "dqszd": 350583,
+        "drsfzxid": 1,
+        "sbrq": date.today().strftime('%Y-%m-%d'),
+        "dqszdmc": "福建省泉州市南安市",
+        "tw": 36.5,
+        "dqszdxxdz": "康美校区",
+        "ycms": "",
+        "twid": 1,
+        "jzkid": 1
+    }
+    logger.debug(f"form_data = {form_data}")
+    is_want_to_sign=get_choose("是否要打卡？")
+    if not is_want_to_sign:
+        print("用户取消打卡，结束程序")
+        sys.exit(0)
+    resp_mrdk_save=session.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_save.do",
+                                data=form_data)
+    resp_mrdk_save_data=resp_mrdk_save.json()
+    if resp_mrdk_save_data["ret"]=="ok":
+        print("打卡成功")
+    elif resp_mrdk_save_data["ret"]=="more":
+        print("重复打卡，今日已打卡")
+    else:
+        print(f"打卡接口返回未知结果：ret == {resp_mrdk_save_data["ret"]}")
+
+signup()
+
 def take_screenshot(session: requests.Session, output_dir: str = ".") -> str | None:
     """
     使用 Playwright 截取打卡记录页面截图
@@ -253,38 +295,6 @@ def take_screenshot(session: requests.Session, output_dir: str = ".") -> str | N
         logger.error(f"截图失败: {e}")
         return None
 
-def signup():
-    form_data = {
-        "id": "",
-        "xsid": xsid,
-        "jd": 118.47673,
-        "wd": 25.03694,
-        "dqszd": 350583,
-        "drsfzxid": 1,
-        "sbrq": date.today().strftime('%Y-%m-%d'),
-        "dqszdmc": "福建省泉州市南安市",
-        "tw": 36.5,
-        "dqszdxxdz": "康美校区",
-        "ycms": "",
-        "twid": 1,
-        "jzkid": 1
-    }
-    logger.debug(f"form_data = {form_data}")
-    is_want_to_sign=input("是否要打卡？ (y/N): ")
-    if not is_want_to_sign.lower() == 'y':
-        print("用户取消打卡，结束程序")
-        sys.exit(0)
-    resp_mrdk_save=session.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_save.do",
-                                data=form_data)
-    resp_mrdk_save_data=resp_mrdk_save.json()
-    if resp_mrdk_save_data["ret"]=="ok":
-        print("打卡成功")
-    elif resp_mrdk_save_data["ret"]=="more":
-        print("重复打卡，今日已打卡")
-    else:
-        print(f"打卡接口返回未知结果：ret == {resp_mrdk_save_data["ret"]}")
-
-signup()
 
 print("正在截取打卡记录页面...")
 take_screenshot(session,output_dir="./screenshot/")
