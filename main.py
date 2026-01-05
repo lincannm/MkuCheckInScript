@@ -2,13 +2,8 @@
 
 import logging
 import json
+import argparse
 from pathlib import Path
-
-
-LOGGER_LEVEL=logging.DEBUG      # 日志级别（目前只有 DEBUG 级别日志）
-# LOGGER_LEVEL=logging.INFO     # 日志级别（无 DEBUG 日志）
-IS_VERIFY_SSL=True              # requests 库是否验证 SSL 证书，Charles 抓包用
-
 
 import re
 import sys
@@ -24,6 +19,16 @@ from Crypto.Cipher import PKCS1_v1_5
 import requests
 from requests import Response
 import base64
+
+# 解析命令行参数
+parser = argparse.ArgumentParser(description="MKU 学工系统自动打卡脚本")
+parser.add_argument("-d", "--debug", action="store_true", help="启用调试日志输出")
+parser.add_argument("-sc", "--only-screenshot", action="store_true", help="跳过打卡，仅截图打卡记录")
+args = parser.parse_args()
+
+# 配置选项
+LOGGER_LEVEL = logging.DEBUG if args.debug else logging.INFO
+IS_VERIFY_SSL = True  # requests 库是否验证 SSL 证书，Charles 抓包用
 
 
 class ColoredFormatter(logging.Formatter):
@@ -252,35 +257,38 @@ def main():
 
     """ 打卡 """
 
-    form_data = {
-        "id": "",
-        "xsid": xsid,
-        "jd": 118.47673,
-        "wd": 25.03694,
-        "dqszd": 350583,
-        "drsfzxid": 1,
-        "sbrq": date.today().strftime('%Y-%m-%d'),
-        "dqszdmc": "福建省泉州市南安市",
-        "tw": 36.5,
-        "dqszdxxdz": "康美校区",
-        "ycms": "",
-        "twid": 1,
-        "jzkid": 1
-    }
-    logger.debug(f"form_data = {form_data}")
-    is_want_to_sign=get_choose("是否要打卡？")
-    if not is_want_to_sign:
-        print("用户取消打卡，结束程序")
-        sys.exit(0)
-    resp_mrdk_save=session.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_save.do",
-                                data=form_data)
-    resp_mrdk_save_data=resp_mrdk_save.json()
-    if resp_mrdk_save_data["ret"]=="ok":
-        print("打卡成功")
-    elif resp_mrdk_save_data["ret"]=="more":
-        print("重复打卡，今日已打卡")
+    if not args.only_screenshot:
+        form_data = {
+            "id": "",
+            "xsid": xsid,
+            "jd": 118.47673,
+            "wd": 25.03694,
+            "dqszd": 350583,
+            "drsfzxid": 1,
+            "sbrq": date.today().strftime('%Y-%m-%d'),
+            "dqszdmc": "福建省泉州市南安市",
+            "tw": 36.5,
+            "dqszdxxdz": "康美校区",
+            "ycms": "",
+            "twid": 1,
+            "jzkid": 1
+        }
+        logger.debug(f"form_data = {form_data}")
+        is_want_to_sign=get_choose("是否要打卡？")
+        if not is_want_to_sign:
+            print("用户取消打卡，结束程序")
+            sys.exit(0)
+        resp_mrdk_save=session.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_save.do",
+                                    data=form_data)
+        resp_mrdk_save_data=resp_mrdk_save.json()
+        if resp_mrdk_save_data["ret"]=="ok":
+            print("打卡成功")
+        elif resp_mrdk_save_data["ret"]=="more":
+            print("重复打卡，今日已打卡")
+        else:
+            print(f"打卡接口返回未知结果：ret == {resp_mrdk_save_data['ret']}")
     else:
-        print(f"打卡接口返回未知结果：ret == {resp_mrdk_save_data['ret']}")
+        print("已跳过打卡步骤")
 
     print("正在截取打卡记录页面...")
     take_screenshot(session, output_dir="./screenshot/")
@@ -312,7 +320,6 @@ def take_screenshot(session: requests.Session, output_dir: str = ".") -> str | N
         if cookie.secure:
             pw_cookie["secure"] = True
         playwright_cookies.append(pw_cookie)
-
     logger.debug(f"Playwright cookies: {playwright_cookies}")
 
     try:
