@@ -36,11 +36,43 @@ playwright install chromium
 
 ## 配置
 
-编辑脚本开头配置用户名和密码：
+首次运行会自动创建 `accounts.json` 配置文件，编辑该文件添加账号信息：
 
-```python
-USERNAME="xxx"
-PASSWORD="xxx"
+```json
+{
+  "accounts": [
+    {
+      "name": "显示名称",
+      "username": "学号",
+      "password": "密码"
+    }
+  ]
+}
 ```
 
-最后直接运行，不必多说。
+## 运行
+
+```shell
+python main.py
+```
+
+### 命令行参数
+
+| 参数 | 说明 |
+|------|------|
+| `-d`, `--debug` | 启用调试日志输出 |
+| `-sc`, `--only-screenshot` | 跳过打卡，仅截图打卡记录 |
+| `-o PATH`, `--output PATH` | 截图保存目录（默认：桌面） |
+
+示例：
+
+```shell
+# 仅截图，不打卡
+python main.py -sc
+
+# 启用调试日志
+python main.py -d
+
+# 指定截图保存到当前目录
+python main.py -o .
+```
