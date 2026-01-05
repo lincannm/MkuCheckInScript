@@ -4,13 +4,11 @@ import logging
 import json
 from pathlib import Path
 
-""" --- 基本配置 --- """
 
 LOGGER_LEVEL=logging.DEBUG      # 日志级别（目前只有 DEBUG 级别日志）
 # LOGGER_LEVEL=logging.INFO     # 日志级别（无 DEBUG 日志）
 IS_VERIFY_SSL=True              # requests 库是否验证 SSL 证书，Charles 抓包用
 
-""" -------------- """
 
 import re
 import sys
@@ -320,7 +318,7 @@ def take_screenshot(session: requests.Session, output_dir: str = ".") -> str | N
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            context = browser.new_context(**p.devices["Pixel 5"])
+            context = browser.new_context(**p.devices["Pixel 7"])
             context.add_cookies(playwright_cookies)
 
             page = context.new_page()
