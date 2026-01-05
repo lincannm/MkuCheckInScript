@@ -24,6 +24,9 @@ import base64
 parser = argparse.ArgumentParser(description="MKU 学工系统自动打卡脚本")
 parser.add_argument("-d", "--debug", action="store_true", help="启用调试日志输出")
 parser.add_argument("-sc", "--only-screenshot", action="store_true", help="跳过打卡，仅截图打卡记录")
+parser.add_argument("-o", "--output", type=str,
+                    default=os.path.join(os.path.expanduser("~"), "Desktop"),
+                    help="截图保存目录（默认：桌面）")
 args = parser.parse_args()
 
 # 配置选项
@@ -291,7 +294,7 @@ def main():
         print("已跳过打卡步骤")
 
     print("正在截取打卡记录页面...")
-    take_screenshot(session, output_dir="./screenshot/")
+    take_screenshot(session, output_dir=args.output)
 
 def take_screenshot(session: requests.Session, output_dir: str = ".") -> str | None:
     """
