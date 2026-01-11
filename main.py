@@ -28,6 +28,10 @@ parser.add_argument("-s", "--only-screenshot", action="store_true", help="仅截
 parser.add_argument("-o", "--output", type=str,
                     default=os.path.join(os.path.expanduser("~"), "Desktop"),
                     help="截图保存目录（默认：桌面）")
+
+# 账号管理参数
+parser.add_argument("-m", "--manage-account", action="store_true", help="进入账号管理菜单")
+
 args = parser.parse_args()
 
 # 配置选项
@@ -140,7 +144,412 @@ def select_account(accounts: list[dict]) -> dict:
         except ValueError:
             print("请输入有效的数字")
 
+def validate_account_data(name: str, username: str, password: str) -> tuple[bool, str]:
+    """
+    验证账号数据完整性
+
+    Args:
+        name: 显示名称
+        username: 用户名（学号）
+        password: 密码
+
+    Returns:
+        (is_valid, error_message): 验证结果和错误信息
+    """
+    # 检查显示名称
+    if not name or not name.strip():
+        return False, "显示名称不能为空"
+
+    # 检查用户名
+    if not username or not username.strip():
+        return False, "用户名不能为空"
+
+    # 检查密码（不去除空格，密码可能包含空格）
+    if not password:
+        return False, "密码不能为空"
+
+    return True, ""
+
+def check_duplicate(accounts: list[dict], name: str, username: str,
+                   exclude_index: int = -1) -> tuple[bool, str]:
+    """
+    检查 name 和 username 是否重复
+
+    Args:
+        accounts: 账号列表
+        name: 要检查的显示名称
+        username: 要检查的用户名
+        exclude_index: 编辑时排除当前账号的索引（-1 表示不排除）
+
+    Returns:
+        (has_duplicate, duplicate_info): 是否重复及重复信息
+    """
+    name_lower = name.strip().lower()
+    username_lower = username.strip().lower()
+
+    for i, acc in enumerate(accounts):
+        # 编辑模式下排除当前账号
+        if i == exclude_index:
+            continue
+
+        # 检查 name 重复（不区分大小写）
+        if acc['name'].strip().lower() == name_lower:
+            return True, f"显示名称 '{name.strip()}' 已存在"
+
+        # 检查 username 重复（不区分大小写）
+        if acc['username'].strip().lower() == username_lower:
+            return True, f"用户名 '{username.strip()}' 已存在"
+
+    return False, ""
+
+def save_accounts(accounts: list[dict]) -> bool:
+    """
+    保存账号列表到 accounts.json
+
+    Args:
+        accounts: 账号列表
+
+    Returns:
+        是否保存成功
+    """
+    config_path = Path(__file__).parent / "accounts.json"
+    try:
+        config_data = {"accounts": accounts}
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config_data, f, ensure_ascii=False, indent=2)
+        return True
+    except IOError as e:
+        print(f"保存失败: {e}")
+        return False
+    except Exception as e:
+        print(f"未知错误: {e}")
+        return False
+
+def add_account_interactive():
+    """交互式添加账号"""
+    print("\n=== 添加新账号 ===")
+
+    # 加载现有账号
+    config_path = Path(__file__).parent / "accounts.json"
+    if config_path.exists():
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                accounts = json.load(f)["accounts"]
+        except Exception as e:
+            print(f"读取配置文件失败: {e}")
+            return
+    else:
+        accounts = []
+
+    # 输入账号信息
+    while True:
+        name = input("请输入显示名称: ").strip()
+        username = input("请输入用户名（学号）: ").strip()
+        password = input("请输入密码: ")
+
+        # 验证数据完整性
+        is_valid, error_msg = validate_account_data(name, username, password)
+        if not is_valid:
+            print(f"✗ {error_msg}")
+            retry = input("是否重新输入？(Y/n): ")
+            if retry.lower() == 'n':
+                print("已取消添加账号")
+                return
+            continue
+
+        # 检查重复
+        has_duplicate, duplicate_msg = check_duplicate(accounts, name, username)
+        if has_duplicate:
+            print(f"✗ {duplicate_msg}")
+            retry = input("是否重新输入？(Y/n): ")
+            if retry.lower() == 'n':
+                print("已取消添加账号")
+                return
+            continue
+
+        # 添加账号
+        new_account = {
+            "name": name,
+            "username": username,
+            "password": password
+        }
+        accounts.append(new_account)
+
+        # 保存到文件
+        if save_accounts(accounts):
+            print(f"\n✓ 账号添加成功！")
+            print(f"  姓名: {name}")
+            print(f"  用户名: {username}")
+        else:
+            print("✗ 保存失败，请检查文件权限")
+
+        break
+
+def delete_account_interactive():
+    """交互式删除账号"""
+    print("\n=== 删除账号 ===")
+
+    # 加载账号列表
+    try:
+        accounts = load_accounts()
+    except SystemExit:
+        return
+
+    if not accounts:
+        print("暂无账号")
+        return
+
+    # 显示账号列表
+    print("当前账号列表：")
+    for i, acc in enumerate(accounts, 1):
+        print(f"  {i}. {acc['name']} ({acc['username']})")
+
+    # 选择要删除的账号
+    while True:
+        try:
+            choice = input("\n请输入要删除的账号序号（输入 0 取消）: ")
+            choice_num = int(choice)
+
+            if choice_num == 0:
+                print("已取消删除")
+                return
+
+            if 1 <= choice_num <= len(accounts):
+                selected_account = accounts[choice_num - 1]
+                break
+
+            print(f"请输入 1-{len(accounts)} 之间的数字")
+        except ValueError:
+            print("请输入有效的数字")
+
+    # 二次确认
+    print(f"\n确认删除以下账号？")
+    print(f"  姓名: {selected_account['name']}")
+    print(f"  用户名: {selected_account['username']}")
+
+    if not get_choose("确认删除"):
+        print("已取消删除")
+        return
+
+    # 删除账号
+    accounts.pop(choice_num - 1)
+
+    # 保存到文件
+    if save_accounts(accounts):
+        print("\n✓ 账号已删除")
+    else:
+        print("✗ 保存失败，请检查文件权限")
+
+def edit_account_interactive():
+    """交互式编辑账号"""
+    print("\n=== 编辑账号 ===")
+
+    # 加载账号列表
+    try:
+        accounts = load_accounts()
+    except SystemExit:
+        return
+
+    if not accounts:
+        print("暂无账号")
+        return
+
+    # 显示账号列表
+    print("当前账号列表：")
+    for i, acc in enumerate(accounts, 1):
+        print(f"  {i}. {acc['name']} ({acc['username']})")
+
+    # 选择要编辑的账号
+    while True:
+        try:
+            choice = input("\n请输入要编辑的账号序号（输入 0 取消）: ")
+            choice_num = int(choice)
+
+            if choice_num == 0:
+                print("已取消编辑")
+                return
+
+            if 1 <= choice_num <= len(accounts):
+                selected_index = choice_num - 1
+                selected_account = accounts[selected_index]
+                break
+
+            print(f"请输入 1-{len(accounts)} 之间的数字")
+        except ValueError:
+            print("请输入有效的数字")
+
+    # 显示当前信息
+    print(f"\n当前信息：")
+    print(f"  姓名: {selected_account['name']}")
+    print(f"  用户名: {selected_account['username']}")
+    print(f"  密码: {'*' * 6}")
+
+    # 输入新信息
+    while True:
+        print("\n请输入新信息（回车保持不变）：")
+        new_name = input(f"显示名称 [{selected_account['name']}]: ").strip()
+        new_username = input(f"用户名 [{selected_account['username']}]: ").strip()
+        new_password = input(f"密码 [保持不变]: ")
+
+        # 使用原值或新值
+        final_name = new_name if new_name else selected_account['name']
+        final_username = new_username if new_username else selected_account['username']
+        final_password = new_password if new_password else selected_account['password']
+
+        # 验证数据完整性
+        is_valid, error_msg = validate_account_data(final_name, final_username, final_password)
+        if not is_valid:
+            print(f"✗ {error_msg}")
+            retry = input("是否重新输入？(Y/n): ")
+            if retry.lower() == 'n':
+                print("已取消编辑")
+                return
+            continue
+
+        # 检查重复（排除当前账号）
+        has_duplicate, duplicate_msg = check_duplicate(accounts, final_name, final_username, selected_index)
+        if has_duplicate:
+            print(f"✗ {duplicate_msg}")
+            retry = input("是否重新输入？(Y/n): ")
+            if retry.lower() == 'n':
+                print("已取消编辑")
+                return
+            continue
+
+        # 更新账号信息
+        accounts[selected_index] = {
+            "name": final_name,
+            "username": final_username,
+            "password": final_password
+        }
+
+        # 保存到文件
+        if save_accounts(accounts):
+            print(f"\n✓ 账号信息已更新")
+        else:
+            print("✗ 保存失败，请检查文件权限")
+
+        break
+
+def list_accounts_formatted():
+    """格式化列出所有账号"""
+    print("\n=== 账号列表 ===")
+
+    # 加载账号列表
+    try:
+        accounts = load_accounts()
+    except SystemExit:
+        return
+
+    if not accounts:
+        print("暂无账号")
+        return
+
+    # 表头
+    print(f"{'序号':<6}{'姓名':<12}{'用户名':<15}{'密码':<10}")
+    print("-" * 50)
+
+    # 账号列表
+    for i, acc in enumerate(accounts, 1):
+        name = acc['name']
+        username = acc['username']
+        password = acc['password']
+        print(f"{i:<6}{name:<12}{username:<15}{password:<10}")
+
+    print(f"\n共 {len(accounts)} 个账号")
+
+def manage_account_menu():
+    """账号管理菜单"""
+    while True:
+        print("\n" + "=" * 50)
+        print("账号管理菜单")
+        print("=" * 50)
+        print("1. 列出所有账号")
+        print("2. 添加新账号")
+        print("3. 编辑账号")
+        print("4. 删除账号")
+        print("0. 返回/退出")
+        print("=" * 50)
+
+        choice = input("\n请选择操作: ").strip()
+
+        if choice == '1':
+            list_accounts_formatted()
+        elif choice == '2':
+            add_account_interactive()
+        elif choice == '3':
+            edit_account_interactive()
+        elif choice == '4':
+            delete_account_interactive()
+        elif choice == '0':
+            print("退出账号管理")
+            break
+        else:
+            print("无效的选择，请输入 0-4")
+
+
+
+
+def take_screenshot(session: requests.Session, output_dir: str = ".") -> str | None:
+    """
+    使用 Playwright 截取打卡记录页面截图
+
+    Args:
+        session: 已登录的 requests Session 对象
+        output_dir: 截图保存目录
+    Returns:
+        截图文件路径，失败返回 None
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    screenshot_path = os.path.join(output_dir, f"screenshot_{timestamp}.png")
+
+    # 转换 cookies 为 Playwright 格式
+    playwright_cookies = []
+    for cookie in session.cookies:
+        pw_cookie = {
+            "name": cookie.name,
+            "value": cookie.value,
+            "domain": cookie.domain if cookie.domain else ".mku.edu.cn",
+            "path": cookie.path if cookie.path else "/",
+        }
+        if cookie.expires:
+            pw_cookie["expires"] = cookie.expires
+        if cookie.secure:
+            pw_cookie["secure"] = True
+        playwright_cookies.append(pw_cookie)
+    logger.debug(f"Playwright cookies: {playwright_cookies}")
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(**p.devices["Pixel 7"])
+            context.add_cookies(playwright_cookies)
+
+            page = context.new_page()
+            page.goto(
+                "https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_index.do",
+                wait_until="networkidle"
+            )
+            page.wait_for_timeout(1000)  # 等待渲染完成
+            page.screenshot(path=screenshot_path, full_page=True)
+
+            context.close()
+            browser.close()
+
+            print(f"截图已保存: {screenshot_path}")
+            return screenshot_path
+
+    except Exception as e:
+        logger.error(f"截图失败: {e}")
+        return None
+
+
 def main():
+    # 检查是否为账号管理模式
+    if args.manage_account:
+        manage_account_menu()
+        return
+
     # 加载并选择账号
     accounts = load_accounts()
     account = select_account(accounts)
@@ -239,17 +648,25 @@ def main():
 
     # 用户认证，让CAS系统自己带ticket进行302跳转到service指定服务（打卡服务）
     print("登录学工系统...")
-    # resp_login_302=session.post("https://cas.mku.edu.cn/cas/login",
+    # resp_mrdk_index=session.post("https://cas.mku.edu.cn/cas/login",
     #                         params={
     #                             "service":"https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_index.do"
     #                         },
     #                         allow_redirects=True)
     # 上下请求等效，下面这种请求会302至上面这种请求
-    resp_login_302=session.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_index.do",
+    resp_mrdk_index=session.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_index.do",
                             allow_redirects=True)
 
     print(f'获取到 JSESSIONID: {session.cookies.get("JSESSIONID",domain="xgyd.mku.edu.cn")}')
     # print(f'JSESSIONID: {session.cookies.get_dict()}')
+
+    # 检查是否要打卡
+    pattern=r'<div[^>]*foot_btn[^>]*>(.*?)</div>'
+    dk_text=re.search(pattern,resp_mrdk_index.text).group(1)
+    if not dk_text == '上报':
+        print("无需打卡，因为已经打卡完毕")
+        return
+
     # 获取打卡需要的xsid
     print("获取 xsid...")
     resp_mrdk_edit=session.get("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_edit")
@@ -259,7 +676,7 @@ def main():
                   ).group(1)
     print(f"获取到 xsid: {xsid}")
 
-    """ 打卡 """
+    """ 开始打卡 """
 
     if not args.only_screenshot:
         form_data = {
@@ -300,58 +717,6 @@ def main():
     else:
         print("已跳过截图步骤")
 
-def take_screenshot(session: requests.Session, output_dir: str = ".") -> str | None:
-    """
-    使用 Playwright 截取打卡记录页面截图
-
-    Args:
-        session: 已登录的 requests Session 对象
-        output_dir: 截图保存目录
-    Returns:
-        截图文件路径，失败返回 None
-    """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    screenshot_path = os.path.join(output_dir, f"screenshot_{timestamp}.png")
-
-    # 转换 cookies 为 Playwright 格式
-    playwright_cookies = []
-    for cookie in session.cookies:
-        pw_cookie = {
-            "name": cookie.name,
-            "value": cookie.value,
-            "domain": cookie.domain if cookie.domain else ".mku.edu.cn",
-            "path": cookie.path if cookie.path else "/",
-        }
-        if cookie.expires:
-            pw_cookie["expires"] = cookie.expires
-        if cookie.secure:
-            pw_cookie["secure"] = True
-        playwright_cookies.append(pw_cookie)
-    logger.debug(f"Playwright cookies: {playwright_cookies}")
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(**p.devices["Pixel 7"])
-            context.add_cookies(playwright_cookies)
-
-            page = context.new_page()
-            page.goto(
-                "https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_index.do",
-                wait_until="networkidle"
-            )
-            page.wait_for_timeout(1000)  # 等待渲染完成
-            page.screenshot(path=screenshot_path, full_page=True)
-
-            context.close()
-            browser.close()
-
-            print(f"截图已保存: {screenshot_path}")
-            return screenshot_path
-
-    except Exception as e:
-        logger.error(f"截图失败: {e}")
-        return None
 
 
 if __name__ == "__main__":
