@@ -61,14 +61,18 @@ python main.py
 | 参数 | 说明 |
 |------|------|
 | `-d`, `--debug` | 启用调试日志输出 |
-| `-sc`, `--only-screenshot` | 跳过打卡，仅截图打卡记录 |
+| `-c`, `--only-checkin` | 仅打卡，跳过截图 |
+| `-s`, `--only-screenshot` | 仅截图打卡记录，跳过打卡 |
 | `-o PATH`, `--output PATH` | 截图保存目录（默认：桌面） |
 
 示例：
 
 ```shell
+# 仅打卡，不截图
+python main.py -c
+
 # 仅截图，不打卡
-python main.py -sc
+python main.py -s
 
 # 启用调试日志
 python main.py -d
