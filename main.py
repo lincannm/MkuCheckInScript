@@ -4,23 +4,22 @@ import logging
 import json
 import argparse
 from pathlib import Path
-
 import re
 import sys
 import os
 from datetime import date, datetime
 from playwright.sync_api import sync_playwright
-
-if sys.platform == "win32":
-    os.system("")
-
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_v1_5
 import requests
 from requests import Response
 import base64
 
-# 解析命令行参数
+if sys.platform == "win32":
+    os.system("")
+
+""" 解析命令行参数 """
+
 parser = argparse.ArgumentParser(description="MKU 学工系统自动打卡脚本")
 parser.add_argument("-d", "--debug", action="store_true", help="启用调试日志输出")
 parser.add_argument("-c", "--only-checkin", action="store_true", help="仅打卡")
@@ -28,16 +27,10 @@ parser.add_argument("-s", "--only-screenshot", action="store_true", help="仅截
 parser.add_argument("-o", "--output", type=str,
                     default=os.path.join(os.path.expanduser("~"), "Desktop"),
                     help="截图保存目录（默认：桌面）")
-
-# 账号管理参数
 parser.add_argument("-m", "--manage-account", action="store_true", help="进入账号管理菜单")
-
 args = parser.parse_args()
 
-# 配置选项
-LOGGER_LEVEL = logging.DEBUG if args.debug else logging.INFO
-IS_VERIFY_SSL = True  # requests 库是否验证 SSL 证书，Charles 抓包用
-
+""" Logger 配置 """
 
 class ColoredFormatter(logging.Formatter):
     """ 带颜色的日志格式化器 """
@@ -60,34 +53,22 @@ class ColoredFormatter(logging.Formatter):
         # 格式化日志级别
         colored_level=f"{level_color}{record.levelname}{self.RESET}"
         return f"{colored_level} - {colored_time}: {record.getMessage()}"
-# Logger 配置
 logger=logging.getLogger("MkuCheckInScript")
-logger.setLevel(LOGGER_LEVEL)
+logger.setLevel(logging.DEBUG if args.debug else logging.INFO)
 logging_handler=logging.StreamHandler(sys.stdout)
 logging_handler.setFormatter(ColoredFormatter())
 logger.addHandler(logging_handler)
 
-# RSA 公钥（用于密码加密）
-RSA_KEY="""-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2g9Mhv3s+exdz7iV+M/oUheb8Tz3CCtMjXUBOmLxHzjEG6V0DcZGyNIwuIcPJeavRzdC+Hs01SneJ/5AZHQQVg66+vBdjBqahsv2Ibts9t6OOdg8YaVE8te26AQR3ISLxzERf62gEmO6Zgkl45unvt3BM4uy+60HXmuFC8i/jhKJW1Ax8gZddnjFs5Yx2fwHqx+8YTqd8kN3ovZaHSfwp31ioJwoYyPxZRlRDq0J+p3uQs/A8BcZm5yqPwWMCL18fleChin9Z3VX1VZfURYLnFHgpCqKWraU0z4WncB3MS9QEF+kYucCT+e9kpsrUhBlmpz1BZKjX/bI3qVcJw1CnQIDAQAB
------END PUBLIC KEY-----"""
+""" Session 配置 """
 
-def encrypt_password(password: str) -> str:
-    """使用 RSA 加密密码"""
-    rsa_public_key = RSA.import_key(RSA_KEY)
-    cipher_rsa = PKCS1_v1_5.new(rsa_public_key)
-    encrypted_password_byte = cipher_rsa.encrypt(password.encode('utf-8'))
-    return "__RSA__" + base64.b64encode(encrypted_password_byte).decode('utf-8')
-
-# requests Session 配置
-session=requests.Session()
-session.headers.update({
+SESSION=requests.Session()
+SESSION.headers.update({
     # "sec-ch-ua": '"Chromium";v="142", "Microsoft Edge";v="142", "Not_A Brand";v="99"',
     # "sec-ch-ua-mobile": "?0",
     # "sec-ch-ua-platform": "Windows",
     # "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0"
 })
-session.verify=IS_VERIFY_SSL
+SESSION.verify=True
 def response_hook(response: Response,*args,**kwargs):
     lines = response.text.splitlines()
     if len(lines) > 12:
@@ -95,8 +76,9 @@ def response_hook(response: Response,*args,**kwargs):
     else:
         response_text = '\n'.join(lines)
     logger.debug(f"Response from {response.url} [{response.status_code}] {response_text}")
+SESSION.hooks["response"]=response_hook
 
-session.hooks["response"]=response_hook
+""" 账号管理交互 """
 
 def get_choose(msg: str):
     while True:
@@ -487,15 +469,24 @@ def manage_account_menu():
         else:
             print("无效的选择，请输入 0-4")
 
+""" 登录相关 """
 
+def encrypt_password(password: str) -> str:
+    """使用 RSA 加密密码"""
+    # RSA 公钥（用于密码加密）
+    rsa_key="""-----BEGIN PUBLIC KEY-----
+    MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2g9Mhv3s+exdz7iV+M/oUheb8Tz3CCtMjXUBOmLxHzjEG6V0DcZGyNIwuIcPJeavRzdC+Hs01SneJ/5AZHQQVg66+vBdjBqahsv2Ibts9t6OOdg8YaVE8te26AQR3ISLxzERf62gEmO6Zgkl45unvt3BM4uy+60HXmuFC8i/jhKJW1Ax8gZddnjFs5Yx2fwHqx+8YTqd8kN3ovZaHSfwp31ioJwoYyPxZRlRDq0J+p3uQs/A8BcZm5yqPwWMCL18fleChin9Z3VX1VZfURYLnFHgpCqKWraU0z4WncB3MS9QEF+kYucCT+e9kpsrUhBlmpz1BZKjX/bI3qVcJw1CnQIDAQAB
+    -----END PUBLIC KEY-----"""
+    rsa_public_key=RSA.import_key(rsa_key)
+    cipher_rsa=PKCS1_v1_5.new(rsa_public_key)
+    encrypted_password_byte=cipher_rsa.encrypt(password.encode('utf-8'))
+    return "__RSA__"+base64.b64encode(encrypted_password_byte).decode('utf-8')
 
-
-def take_screenshot(session: requests.Session, output_dir: str = ".") -> str | None:
+def take_screenshot(output_dir: str = ".") -> str | None:
     """
     使用 Playwright 截取打卡记录页面截图
 
     Args:
-        session: 已登录的 requests Session 对象
         output_dir: 截图保存目录
     Returns:
         截图文件路径，失败返回 None
@@ -505,7 +496,7 @@ def take_screenshot(session: requests.Session, output_dir: str = ".") -> str | N
 
     # 转换 cookies 为 Playwright 格式
     playwright_cookies = []
-    for cookie in session.cookies:
+    for cookie in SESSION.cookies:
         pw_cookie = {
             "name": cookie.name,
             "value": cookie.value,
@@ -543,6 +534,46 @@ def take_screenshot(session: requests.Session, output_dir: str = ".") -> str | N
         logger.error(f"截图失败: {e}")
         return None
 
+def check_in():
+    # 获取打卡需要的xsid
+    print("获取 xsid...")
+    resp_mrdk_edit=SESSION.get("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_edit")
+    resp_mrdk_edit_html=resp_mrdk_edit.text
+    xsid=re.search(
+        r'id="xsid" value="([^"]+)"',resp_mrdk_edit_html
+    ).group(1)
+    print(f"获取到 xsid: {xsid}")
+    form_data={
+        "id": "",
+        "xsid": xsid,
+        "jd": 118.47673,
+        "wd": 25.03694,
+        "dqszd": 350583,
+        "drsfzxid": 1,
+        "sbrq": date.today().strftime('%Y-%m-%d'),
+        "dqszdmc": "福建省泉州市南安市",
+        "tw": 36.5,
+        "dqszdxxdz": "康美校区",
+        "ycms": "",
+        "twid": 1,
+        "jzkid": 1
+    }
+    logger.debug(f"form_data = {form_data}")
+    is_want_to_sign=get_choose("是否要打卡？")
+    if not is_want_to_sign:
+        print("用户取消打卡，结束程序")
+        sys.exit(0)
+    resp_mrdk_save=SESSION.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_save.do",
+                                data=form_data)
+    resp_mrdk_save_data=resp_mrdk_save.json()
+    if resp_mrdk_save_data["ret"] == "ok":
+        print("打卡成功")
+    elif resp_mrdk_save_data["ret"] == "more":
+        print("重复打卡，今日已打卡")
+    else:
+        print(f"打卡接口返回未知结果：ret == {resp_mrdk_save_data['ret']}")
+
+""" 主函数 """
 
 def main():
     # 检查是否为账号管理模式
@@ -560,12 +591,12 @@ def main():
     """ 验证手机 """
 
     print("检测是否需要双因素验证... ",end='')
-    resp_mfa_detect=session.post("https://cas.mku.edu.cn/cas/mfa/detect",
-                                  data={
+    resp_mfa_detect=SESSION.post("https://cas.mku.edu.cn/cas/mfa/detect",
+                                 data={
                                       'username': username,
                                       'password': password_encoded
                                   },
-                                  headers={
+                                 headers={
                                       "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
                                   })
     resp_mfa_detect_data=resp_mfa_detect.json()
@@ -573,8 +604,8 @@ def main():
 
     # 如果需要手机验证码验证
     if resp_mfa_detect_data["data"]["need"]:
-        resp_securephone=session.get("https://cas.mku.edu.cn/cas/mfa/initByType/securephone",
-                    params={
+        resp_securephone=SESSION.get("https://cas.mku.edu.cn/cas/mfa/initByType/securephone",
+                                     params={
                         "state": resp_mfa_detect_data["data"]["state"]
                     })
         resp_securephone_json=resp_securephone.json()
@@ -585,13 +616,13 @@ def main():
             print("用户取消发送验证码，结束登录")
             sys.exit(0)
         print("正在发送验证码...")
-        resp_securephone_send=session.post("https://cas.mku.edu.cn/attest/api/guard/securephone/send",
+        resp_securephone_send=SESSION.post("https://cas.mku.edu.cn/attest/api/guard/securephone/send",
                                            json={
                                                "gid":gid
                                            })
         while True:
             verify_code=input("输入收到的验证码：")
-            resp_securephone_valid=session.post("https://cas.mku.edu.cn/attest/api/guard/securephone/valid",
+            resp_securephone_valid=SESSION.post("https://cas.mku.edu.cn/attest/api/guard/securephone/valid",
                                                 json={
                                                     "code":verify_code,
                                                     "gid":gid
@@ -611,7 +642,7 @@ def main():
 
     print("登录 CAS...")
     # 获取表单execution字段
-    resp_web_page=session.get("https://cas.mku.edu.cn/cas/login")
+    resp_web_page=SESSION.get("https://cas.mku.edu.cn/cas/login")
     resp_web_page_html=resp_web_page.text
     try:
         execution = re.search(
@@ -622,7 +653,7 @@ def main():
         sys.exit(1)
 
     # 登录
-    resp_login=session.post("https://cas.mku.edu.cn/cas/login",
+    resp_login=SESSION.post("https://cas.mku.edu.cn/cas/login",
                             data={
                                 "username": username,
                                 "password": password_encoded,
@@ -654,69 +685,31 @@ def main():
     #                         },
     #                         allow_redirects=True)
     # 上下请求等效，下面这种请求会302至上面这种请求
-    resp_mrdk_index=session.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_index.do",
-                            allow_redirects=True)
+    resp_mrdk_index=SESSION.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_index.do",
+                                 allow_redirects=True)
 
-    print(f'获取到 JSESSIONID: {session.cookies.get("JSESSIONID",domain="xgyd.mku.edu.cn")}')
+    print(f'获取到 JSESSIONID: {SESSION.cookies.get("JSESSIONID",domain="xgyd.mku.edu.cn")}')
     # print(f'JSESSIONID: {session.cookies.get_dict()}')
-
-    # 检查是否要打卡
-    pattern=r'<div[^>]*foot_btn[^>]*>(.*?)</div>'
-    dk_text=re.search(pattern,resp_mrdk_index.text).group(1)
-    if not dk_text == '上报':
-        print("无需打卡，因为已经打卡完毕")
-        return
-
-    # 获取打卡需要的xsid
-    print("获取 xsid...")
-    resp_mrdk_edit=session.get("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_edit")
-    resp_mrdk_edit_html=resp_mrdk_edit.text
-    xsid = re.search(
-                      r'id="xsid" value="([^"]+)"', resp_mrdk_edit_html
-                  ).group(1)
-    print(f"获取到 xsid: {xsid}")
 
     """ 开始打卡 """
 
     if not args.only_screenshot:
-        form_data = {
-            "id": "",
-            "xsid": xsid,
-            "jd": 118.47673,
-            "wd": 25.03694,
-            "dqszd": 350583,
-            "drsfzxid": 1,
-            "sbrq": date.today().strftime('%Y-%m-%d'),
-            "dqszdmc": "福建省泉州市南安市",
-            "tw": 36.5,
-            "dqszdxxdz": "康美校区",
-            "ycms": "",
-            "twid": 1,
-            "jzkid": 1
-        }
-        logger.debug(f"form_data = {form_data}")
-        is_want_to_sign=get_choose("是否要打卡？")
-        if not is_want_to_sign:
-            print("用户取消打卡，结束程序")
-            sys.exit(0)
-        resp_mrdk_save=session.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_save.do",
-                                    data=form_data)
-        resp_mrdk_save_data=resp_mrdk_save.json()
-        if resp_mrdk_save_data["ret"]=="ok":
-            print("打卡成功")
-        elif resp_mrdk_save_data["ret"]=="more":
-            print("重复打卡，今日已打卡")
+        # 检查是否要打卡
+        pattern=r'<div[^>]*foot_btn[^>]*>(.*?)</div>'
+        dk_text=re.search(pattern,resp_mrdk_index.text).group(1)
+        if dk_text == '上报':
+            # 打卡
+            check_in()
         else:
-            print(f"打卡接口返回未知结果：ret == {resp_mrdk_save_data['ret']}")
+            print("无需打卡，因为已经打卡完毕")
     else:
         print("已跳过打卡步骤")
 
     if not args.only_checkin:
         print("正在截取打卡记录页面...")
-        take_screenshot(session, output_dir=args.output)
+        take_screenshot(output_dir=args.output)
     else:
         print("已跳过截图步骤")
-
 
 
 if __name__ == "__main__":
