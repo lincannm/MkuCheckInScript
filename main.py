@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import sys
 import os
+import time
 from datetime import date, datetime
 from playwright.sync_api import sync_playwright
 from Crypto.PublicKey import RSA
@@ -112,19 +113,54 @@ def load_accounts() -> list[dict]:
     with open(config_path, 'r', encoding='utf-8') as f:
         return json.load(f)["accounts"]
 
-def select_account(accounts: list[dict]) -> dict:
-    """显示账号列表，让用户选择"""
+def select_accounts(accounts: list[dict]) -> list[dict]:
+    """显示账号列表，让用户选择（支持多选）"""
     print("\n请选择要打卡的账号：")
     for i, acc in enumerate(accounts, 1):
         print(f"  {i}. {acc['name']} ({acc['username']})")
+
     while True:
         try:
-            choice = int(input("输入序号: "))
-            if 1 <= choice <= len(accounts):
-                return accounts[choice - 1]
-            print(f"请输入 1-{len(accounts)} 之间的数字")
-        except ValueError:
-            print("请输入有效的数字")
+            user_input = input("输入序号（多个账号用空格分隔）: ").strip()
+
+            # 检查空输入
+            if not user_input:
+                print("输入不能为空，请重新输入")
+                continue
+
+            # 分割输入并转换为整数
+            choices = user_input.split()
+            selected_indices = []
+
+            for choice_str in choices:
+                try:
+                    choice = int(choice_str)
+                    if 1 <= choice <= len(accounts):
+                        selected_indices.append(choice)
+                    else:
+                        print(f"序号 {choice} 超出范围（1-{len(accounts)}），请重新输入")
+                        selected_indices = []
+                        break
+                except ValueError:
+                    print(f"输入格式错误：'{choice_str}' 不是有效的数字，请重新输入")
+                    selected_indices = []
+                    break
+
+            # 如果所有输入都有效
+            if selected_indices:
+                # 去重并保持顺序
+                unique_indices = list(dict.fromkeys(selected_indices))
+                selected_accounts = [accounts[i - 1] for i in unique_indices]
+
+                # 显示已选择的账号
+                print(f"\n已选择 {len(selected_accounts)} 个账号：")
+                for acc in selected_accounts:
+                    print(f"  - {acc['name']} ({acc['username']})")
+
+                return selected_accounts
+
+        except Exception as e:
+            print(f"发生错误：{e}，请重新输入")
 
 def validate_account_data(name: str, username: str, password: str) -> tuple[bool, str]:
     """
@@ -573,6 +609,147 @@ def check_in():
     else:
         print(f"打卡接口返回未知结果：ret == {resp_mrdk_save_data['ret']}")
 
+""" 处理单个账号的打卡和截图 """
+
+def process_account(account: dict, args) -> bool:
+    """
+    处理单个账号的打卡和/或截图操作
+
+    参数：
+        account: 账号字典，包含 'name', 'username', 'password'
+        args: 命令行参数对象
+
+    返回：
+        bool: 处理成功返回 True，失败返回 False
+    """
+    try:
+        username = account["username"]
+        password_encoded = encrypt_password(account["password"])
+        print(f"\n已选择账号: {account['name']} ({username})")
+
+        """ 验证手机 """
+
+        print("检测是否需要双因素验证... ",end='')
+        resp_mfa_detect=SESSION.post("https://cas.mku.edu.cn/cas/mfa/detect",
+                                     data={
+                                          'username': username,
+                                          'password': password_encoded
+                                      },
+                                     headers={
+                                          "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+                                      })
+        resp_mfa_detect_data=resp_mfa_detect.json()
+        print("是" if resp_mfa_detect_data["data"]["need"] else "否")
+
+        # 如果需要手机验证码验证
+        if resp_mfa_detect_data["data"]["need"]:
+            resp_securephone=SESSION.get("https://cas.mku.edu.cn/cas/mfa/initByType/securephone",
+                                         params={
+                            "state": resp_mfa_detect_data["data"]["state"]
+                        })
+            resp_securephone_json=resp_securephone.json()
+            gid=resp_securephone_json["data"]["gid"]
+            phone_number=resp_securephone_json["data"]["securePhone"]
+            is_want_to_send=get_choose(f"登录需要向 {phone_number} 发送短信验证码，是否继续？")
+            if not is_want_to_send:
+                print("用户取消发送验证码，跳过此账号")
+                return False
+            print("正在发送验证码...")
+            resp_securephone_send=SESSION.post("https://cas.mku.edu.cn/attest/api/guard/securephone/send",
+                                               json={
+                                                   "gid":gid
+                                               })
+            while True:
+                verify_code=input("输入收到的验证码：")
+                resp_securephone_valid=SESSION.post("https://cas.mku.edu.cn/attest/api/guard/securephone/valid",
+                                                    json={
+                                                        "code":verify_code,
+                                                        "gid":gid
+                                                    })
+                resp_securephone_valid_status=resp_securephone_valid.json()["data"]["status"]
+                if resp_securephone_valid_status==3:
+                    print("短信验证失败")
+                    continue
+                elif resp_securephone_valid_status==2:
+                    print("短信验证成功")
+                    break
+                else:
+                    print(f"未知错误，status == {resp_securephone_valid_status}")
+                    continue
+
+        """ 登录 """
+
+        print("登录 CAS...")
+        # 获取表单execution字段
+        resp_web_page=SESSION.get("https://cas.mku.edu.cn/cas/login")
+        resp_web_page_html=resp_web_page.text
+        try:
+            execution = re.search(
+                          r'name="execution" value="([^"]+)"', resp_web_page_html
+                      ).group(1)
+        except AttributeError:
+            logger.error("无法从登录页面提取 execution")
+            return False
+
+        # 登录
+        resp_login=SESSION.post("https://cas.mku.edu.cn/cas/login",
+                                data={
+                                    "username": username,
+                                    "password": password_encoded,
+                                    "captcha": "",
+                                    "currentMenu": "1",
+                                    "failN": "-1",
+                                    "mfaState": resp_mfa_detect_data["data"]["state"],
+                                    "execution": execution,
+                                    "_eventId": "submit",
+                                    "geolocation": "",
+                                    "fpVisitorId": "",
+                                    "submit1": "Login1"
+                                },
+                                headers={
+                                    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+                                })
+        resp_login_status_code=resp_login.status_code
+        if not resp_login_status_code == 200:
+            print(f"登录失败，status_code=={resp_login_status_code}")
+            if resp_login_status_code == 401:
+                print("原因：用户名或密码错误")
+            return False
+
+        # 用户认证，让CAS系统自己带ticket进行302跳转到service指定服务（打卡服务）
+        print("登录学工系统...")
+        resp_mrdk_index=SESSION.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_index.do",
+                                     allow_redirects=True)
+
+        print(f'获取到 JSESSIONID: {SESSION.cookies.get("JSESSIONID",domain="xgyd.mku.edu.cn")}')
+
+        """ 开始打卡 """
+
+        if not args.only_screenshot:
+            # 检查是否要打卡
+            pattern=r'<div[^>]*foot_btn[^>]*>(.*?)</div>'
+            dk_text=re.search(pattern,resp_mrdk_index.text).group(1)
+            if dk_text == '上报':
+                # 打卡
+                check_in()
+            else:
+                print("无需打卡，因为已经打卡完毕")
+        else:
+            print("已跳过打卡步骤")
+
+        if not args.only_checkin:
+            print("正在截取打卡记录页面...")
+            take_screenshot(output_dir=args.output)
+        else:
+            print("已跳过截图步骤")
+
+        return True
+
+    except Exception as e:
+        print(f"处理账号时发生错误：{e}")
+        logger.exception("处理账号时发生异常")
+        return False
+
 """ 主函数 """
 
 def main():
@@ -581,135 +758,40 @@ def main():
         manage_account_menu()
         return
 
-    # 加载并选择账号
+    # 加载并选择账号（支持多选）
     accounts = load_accounts()
-    account = select_account(accounts)
-    username = account["username"]
-    password_encoded = encrypt_password(account["password"])
-    print(f"\n已选择账号: {account['name']} ({username})")
+    selected_accounts = select_accounts(accounts)
 
-    """ 验证手机 """
+    # 显示将要处理的账号数量
+    print(f"\n将为 {len(selected_accounts)} 个账号执行操作\n")
 
-    print("检测是否需要双因素验证... ",end='')
-    resp_mfa_detect=SESSION.post("https://cas.mku.edu.cn/cas/mfa/detect",
-                                 data={
-                                      'username': username,
-                                      'password': password_encoded
-                                  },
-                                 headers={
-                                      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
-                                  })
-    resp_mfa_detect_data=resp_mfa_detect.json()
-    print("是" if resp_mfa_detect_data["data"]["need"] else "否")
+    # 批量处理账号
+    results = []
+    for idx, account in enumerate(selected_accounts, 1):
+        print(f"{'='*50}")
+        print(f"正在处理第 {idx}/{len(selected_accounts)} 个账号: {account['name']}")
+        print(f"{'='*50}\n")
 
-    # 如果需要手机验证码验证
-    if resp_mfa_detect_data["data"]["need"]:
-        resp_securephone=SESSION.get("https://cas.mku.edu.cn/cas/mfa/initByType/securephone",
-                                     params={
-                        "state": resp_mfa_detect_data["data"]["state"]
-                    })
-        resp_securephone_json=resp_securephone.json()
-        gid=resp_securephone_json["data"]["gid"]
-        phone_number=resp_securephone_json["data"]["securePhone"]
-        is_want_to_send=get_choose(f"登录需要向 {phone_number} 发送短信验证码，是否继续？")
-        if not is_want_to_send:
-            print("用户取消发送验证码，结束登录")
-            sys.exit(0)
-        print("正在发送验证码...")
-        resp_securephone_send=SESSION.post("https://cas.mku.edu.cn/attest/api/guard/securephone/send",
-                                           json={
-                                               "gid":gid
-                                           })
-        while True:
-            verify_code=input("输入收到的验证码：")
-            resp_securephone_valid=SESSION.post("https://cas.mku.edu.cn/attest/api/guard/securephone/valid",
-                                                json={
-                                                    "code":verify_code,
-                                                    "gid":gid
-                                                })
-            resp_securephone_valid_status=resp_securephone_valid.json()["data"]["status"]
-            if resp_securephone_valid_status==3:
-                print("短信验证失败")
-                continue
-            elif resp_securephone_valid_status==2:
-                print("短信验证成功")
-                break
-            else:
-                print(f"未知错误，status == {resp_securephone_valid_status}")
-                continue
+        # 处理单个账号
+        success = process_account(account, args)
+        results.append({
+            'name': account['name'],
+            'username': account['username'],
+            'success': success
+        })
 
-    """ 登录 """
+        # 账号间延迟（避免请求过快）
+        if idx < len(selected_accounts):
+            print("\n等待 2 秒后处理下一个账号...\n")
+            time.sleep(2)
 
-    print("登录 CAS...")
-    # 获取表单execution字段
-    resp_web_page=SESSION.get("https://cas.mku.edu.cn/cas/login")
-    resp_web_page_html=resp_web_page.text
-    try:
-        execution = re.search(
-                      r'name="execution" value="([^"]+)"', resp_web_page_html
-                  ).group(1)
-    except AttributeError:
-        logger.error("无法从登录页面提取 execution")
-        sys.exit(1)
-
-    # 登录
-    resp_login=SESSION.post("https://cas.mku.edu.cn/cas/login",
-                            data={
-                                "username": username,
-                                "password": password_encoded,
-                                "captcha": "",
-                                "currentMenu": "1",
-                                "failN": "-1",
-                                "mfaState": resp_mfa_detect_data["data"]["state"],
-                                "execution": execution,
-                                "_eventId": "submit",
-                                "geolocation": "",
-                                "fpVisitorId": "",
-                                "submit1": "Login1"
-                            },
-                            headers={
-                                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
-                            })
-    resp_login_status_code=resp_login.status_code
-    if not resp_login_status_code == 200:
-        print(f"登录失败，status_code=={resp_login_status_code}")
-        if resp_login_status_code == 401:
-            print("原因：用户名或密码错误")
-        sys.exit(1)
-
-    # 用户认证，让CAS系统自己带ticket进行302跳转到service指定服务（打卡服务）
-    print("登录学工系统...")
-    # resp_mrdk_index=session.post("https://cas.mku.edu.cn/cas/login",
-    #                         params={
-    #                             "service":"https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_index.do"
-    #                         },
-    #                         allow_redirects=True)
-    # 上下请求等效，下面这种请求会302至上面这种请求
-    resp_mrdk_index=SESSION.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_index.do",
-                                 allow_redirects=True)
-
-    print(f'获取到 JSESSIONID: {SESSION.cookies.get("JSESSIONID",domain="xgyd.mku.edu.cn")}')
-    # print(f'JSESSIONID: {session.cookies.get_dict()}')
-
-    """ 开始打卡 """
-
-    if not args.only_screenshot:
-        # 检查是否要打卡
-        pattern=r'<div[^>]*foot_btn[^>]*>(.*?)</div>'
-        dk_text=re.search(pattern,resp_mrdk_index.text).group(1)
-        if dk_text == '上报':
-            # 打卡
-            check_in()
-        else:
-            print("无需打卡，因为已经打卡完毕")
-    else:
-        print("已跳过打卡步骤")
-
-    if not args.only_checkin:
-        print("正在截取打卡记录页面...")
-        take_screenshot(output_dir=args.output)
-    else:
-        print("已跳过截图步骤")
+    # 打印汇总结果
+    print(f"\n{'='*50}")
+    print("处理完成！汇总结果：")
+    print(f"{'='*50}")
+    for result in results:
+        status = "✓ 成功" if result['success'] else "✗ 失败"
+        print(f"{status} - {result['name']} ({result['username']})")
 
 
 if __name__ == "__main__":
