@@ -780,10 +780,6 @@ def main():
             'success': success
         })
 
-        # 账号间延迟（避免请求过快）
-        if idx < len(selected_accounts):
-            print("\n等待 2 秒后处理下一个账号...\n")
-            time.sleep(2)
 
     # 打印汇总结果
     print(f"\n{'='*50}")
