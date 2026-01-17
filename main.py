@@ -580,23 +580,24 @@ def check_in():
         r'id="xsid" value="([^"]+)"',resp_mrdk_edit_html
     ).group(1)
     print(f"获取到 xsid: {xsid}")
+    sbrq=date.today().strftime('%Y-%m-%d') # 今天日期
     form_data={
-        "id": "",
-        "xsid": xsid,
-        "jd": 118.47673,
-        "wd": 25.03694,
-        "dqszd": 350583,
-        "drsfzxid": 1,
-        "sbrq": date.today().strftime('%Y-%m-%d'),
-        "dqszdmc": "福建省泉州市南安市",
-        "tw": 36.5,
-        "dqszdxxdz": "康美校区",
-        "ycms": "",
-        "twid": 1,
-        "jzkid": 1
+        "id": "",                       # 打卡记录ID，初始为空
+        "xsid": xsid,                   # 学生ID
+        "jd": 118.47673,                # 经度，本次打卡的地理位置经度坐标
+        "wd": 25.03694,                 # 纬度，本次打卡的地理位置纬度坐标
+        "dqszd": 350583,                # 当前所在地区代码，6位行政区划代码
+        "drsfzxid": 1,                  # 当日是否在校ID，1表示"是"，0可能表示"否"
+        "sbrq": sbrq,                   # 上报日期，为 %Y-%m-%d 格式日期
+        "dqszdmc": "福建省泉州市南安市",     # 当前所在地区名称，中文地名
+        "tw": 36.5,                     # 体温，单位摄氏度
+        "dqszdxxdz": "康美校区",          # 当前所在地详细地址，如具体校区
+        "ycms": "",                     # 异常描述，空字符串表示无异常情况
+        "twid": 1,                      # 体温状态ID，1可能表示"正常"或"无异常"
+        "jzkid": 1                      # 健康状态ID，1可能表示"正常"或"健康"
     }
     logger.debug(f"form_data = {form_data}")
-    is_want_to_sign=get_choose("是否要打卡？")
+    is_want_to_sign=get_choose(f"今天日期：{sbrq}\n是否要打卡？")
     if not is_want_to_sign:
         print("用户取消打卡，结束程序")
         sys.exit(0)
@@ -731,6 +732,7 @@ def process_account(account: dict, args) -> bool:
             pattern=r'<div[^>]*foot_btn[^>]*>(.*?)</div>'
             dk_text=re.search(pattern,resp_mrdk_index.text).group(1)
             if dk_text == '上报':
+                print("发现今日未打卡，准备打卡")
                 # 打卡
                 check_in()
             else:
