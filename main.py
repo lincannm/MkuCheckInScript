@@ -518,17 +518,18 @@ def encrypt_password(password: str) -> str:
     encrypted_password_byte=cipher_rsa.encrypt(password.encode('utf-8'))
     return "__RSA__"+base64.b64encode(encrypted_password_byte).decode('utf-8')
 
-def take_screenshot(output_dir: str = ".") -> str | None:
+def take_screenshot(name: str = "none", output_dir: str = ".") -> str | None:
     """
     使用 Playwright 截取打卡记录页面截图
 
     Args:
+        name: 截图所属账号的名字
         output_dir: 截图保存目录
     Returns:
         截图文件路径，失败返回 None
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    screenshot_path = os.path.join(output_dir, f"screenshot_{timestamp}.png")
+    screenshot_path = os.path.join(output_dir, f"screenshot_{name}_{timestamp}.png")
 
     # 转换 cookies 为 Playwright 格式
     playwright_cookies = []
@@ -739,7 +740,7 @@ def process_account(account: dict, args) -> bool:
 
         if not args.only_checkin:
             print("正在截取打卡记录页面...")
-            take_screenshot(output_dir=args.output)
+            take_screenshot(name=account['name'],output_dir=args.output)
         else:
             print("已跳过截图步骤")
 
