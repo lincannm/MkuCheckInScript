@@ -62,14 +62,6 @@ logger.addHandler(logging_handler)
 
 """ Session 配置 """
 
-SESSION=requests.Session()
-SESSION.headers.update({
-    # "sec-ch-ua": '"Chromium";v="142", "Microsoft Edge";v="142", "Not_A Brand";v="99"',
-    # "sec-ch-ua-mobile": "?0",
-    # "sec-ch-ua-platform": "Windows",
-    # "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0"
-})
-SESSION.verify=True
 def response_hook(response: Response,*args,**kwargs):
     lines = response.text.splitlines()
     if len(lines) > 12:
@@ -77,7 +69,19 @@ def response_hook(response: Response,*args,**kwargs):
     else:
         response_text = '\n'.join(lines)
     logger.debug(f"Response from {response.url} [{response.status_code}] {response_text}")
-SESSION.hooks["response"]=response_hook
+
+def create_session() -> requests.Session:
+    """为每个账号创建独立 Session，避免多账号之间互相污染登录态"""
+    session = requests.Session()
+    session.headers.update({
+        # "sec-ch-ua": '"Chromium";v="142", "Microsoft Edge";v="142", "Not_A Brand";v="99"',
+        # "sec-ch-ua-mobile": "?0",
+        # "sec-ch-ua-platform": "Windows",
+        # "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0"
+    })
+    session.verify = True
+    session.hooks["response"] = [response_hook]
+    return session
 
 """ 账号管理交互 """
 
@@ -518,7 +522,7 @@ def encrypt_password(password: str) -> str:
     encrypted_password_byte=cipher_rsa.encrypt(password.encode('utf-8'))
     return "__RSA__"+base64.b64encode(encrypted_password_byte).decode('utf-8')
 
-def take_screenshot(name: str = "none", output_dir: str = ".") -> str | None:
+def take_screenshot(session: requests.Session, name: str = "none", output_dir: str = ".") -> str | None:
     """
     使用 Playwright 截取打卡记录页面截图
 
@@ -533,7 +537,7 @@ def take_screenshot(name: str = "none", output_dir: str = ".") -> str | None:
 
     # 转换 cookies 为 Playwright 格式
     playwright_cookies = []
-    for cookie in SESSION.cookies:
+    for cookie in session.cookies:
         pw_cookie = {
             "name": cookie.name,
             "value": cookie.value,
@@ -571,10 +575,10 @@ def take_screenshot(name: str = "none", output_dir: str = ".") -> str | None:
         logger.error(f"截图失败: {e}")
         return None
 
-def check_in():
+def check_in(session: requests.Session):
     # 获取打卡需要的xsid
     print("获取 xsid...")
-    resp_mrdk_edit=SESSION.get("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_edit")
+    resp_mrdk_edit=session.get("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_edit")
     resp_mrdk_edit_html=resp_mrdk_edit.text
     xsid=re.search(
         r'id="xsid" value="([^"]+)"',resp_mrdk_edit_html
@@ -601,7 +605,7 @@ def check_in():
     if not is_want_to_sign:
         print("用户取消打卡，结束程序")
         sys.exit(0)
-    resp_mrdk_save=SESSION.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_save.do",
+    resp_mrdk_save=session.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_save.do",
                                 data=form_data)
     resp_mrdk_save_data=resp_mrdk_save.json()
     if resp_mrdk_save_data["ret"] == "ok":
@@ -624,7 +628,9 @@ def process_account(account: dict, args) -> bool:
     返回：
         bool: 处理成功返回 True，失败返回 False
     """
+    session = None
     try:
+        session = create_session()
         username = account["username"]
         password_encoded = encrypt_password(account["password"])
         print(f"\n已选择账号: {account['name']} ({username})")
@@ -632,7 +638,7 @@ def process_account(account: dict, args) -> bool:
         """ 验证手机 """
 
         print("检测是否需要双因素验证... ",end='')
-        resp_mfa_detect=SESSION.post("https://cas.mku.edu.cn/cas/mfa/detect",
+        resp_mfa_detect=session.post("https://cas.mku.edu.cn/cas/mfa/detect",
                                      data={
                                           'username': username,
                                           'password': password_encoded
@@ -645,7 +651,7 @@ def process_account(account: dict, args) -> bool:
 
         # 如果需要手机验证码验证
         if resp_mfa_detect_data["data"]["need"]:
-            resp_securephone=SESSION.get("https://cas.mku.edu.cn/cas/mfa/initByType/securephone",
+            resp_securephone=session.get("https://cas.mku.edu.cn/cas/mfa/initByType/securephone",
                                          params={
                             "state": resp_mfa_detect_data["data"]["state"]
                         })
@@ -657,13 +663,13 @@ def process_account(account: dict, args) -> bool:
                 print("用户取消发送验证码，跳过此账号")
                 return False
             print("正在发送验证码...")
-            resp_securephone_send=SESSION.post("https://cas.mku.edu.cn/attest/api/guard/securephone/send",
+            resp_securephone_send=session.post("https://cas.mku.edu.cn/attest/api/guard/securephone/send",
                                                json={
                                                    "gid":gid
                                                })
             while True:
                 verify_code=input("输入收到的验证码：")
-                resp_securephone_valid=SESSION.post("https://cas.mku.edu.cn/attest/api/guard/securephone/valid",
+                resp_securephone_valid=session.post("https://cas.mku.edu.cn/attest/api/guard/securephone/valid",
                                                     json={
                                                         "code":verify_code,
                                                         "gid":gid
@@ -683,18 +689,18 @@ def process_account(account: dict, args) -> bool:
 
         print("登录 CAS...")
         # 获取表单execution字段
-        resp_web_page=SESSION.get("https://cas.mku.edu.cn/cas/login")
+        resp_web_page=session.get("https://cas.mku.edu.cn/cas/login")
         resp_web_page_html=resp_web_page.text
         try:
             execution = re.search(
                           r'name="execution" value="([^"]+)"', resp_web_page_html
                       ).group(1)
         except AttributeError:
-            logger.error("无法从登录页面提取 execution")
+            logger.error(f"无法从登录页面提取 execution，当前页面 URL: {resp_web_page.url}")
             return False
 
         # 登录
-        resp_login=SESSION.post("https://cas.mku.edu.cn/cas/login",
+        resp_login=session.post("https://cas.mku.edu.cn/cas/login",
                                 data={
                                     "username": username,
                                     "password": password_encoded,
@@ -720,10 +726,10 @@ def process_account(account: dict, args) -> bool:
 
         # 用户认证，让CAS系统自己带ticket进行302跳转到service指定服务（打卡服务）
         print("登录学工系统...")
-        resp_mrdk_index=SESSION.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_index.do",
+        resp_mrdk_index=session.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_index.do",
                                      allow_redirects=True)
 
-        print(f'获取到 JSESSIONID: {SESSION.cookies.get("JSESSIONID",domain="xgyd.mku.edu.cn")}')
+        print(f'获取到 JSESSIONID: {session.cookies.get("JSESSIONID",domain="xgyd.mku.edu.cn")}')
 
         """ 开始打卡 """
 
@@ -734,7 +740,7 @@ def process_account(account: dict, args) -> bool:
             if dk_text == '上报':
                 print("发现今日未打卡，准备打卡")
                 # 打卡
-                check_in()
+                check_in(session)
             else:
                 print("无需打卡，因为已经打卡完毕")
         else:
@@ -742,7 +748,7 @@ def process_account(account: dict, args) -> bool:
 
         if not args.only_checkin:
             print("正在截取打卡记录页面...")
-            take_screenshot(name=account['name'],output_dir=args.output)
+            take_screenshot(session, name=account['name'], output_dir=args.output)
         else:
             print("已跳过截图步骤")
 
@@ -752,6 +758,9 @@ def process_account(account: dict, args) -> bool:
         print(f"处理账号时发生错误：{e}")
         logger.exception("处理账号时发生异常")
         return False
+    finally:
+        if session is not None:
+            session.close()
 
 """ 主函数 """
 
