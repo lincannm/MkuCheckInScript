@@ -54,6 +54,7 @@ python main.py
 | `-d`, `--debug` | 启用调试日志输出 |
 | `-c`, `--only-checkin` | 仅打卡，跳过截图 |
 | `-s`, `--only-screenshot` | 仅截图打卡记录，跳过打卡 |
+| `-a N [N ...]`, `--accounts N [N ...]` | 指定账号序号，支持一次传多个 |
 | `-o PATH`, `--output PATH` | 截图保存目录（默认：桌面） |
 
 示例：
@@ -67,6 +68,12 @@ python main.py -s
 
 # 启用调试日志
 python main.py -d
+
+# 指定第 1 个账号打卡
+python main.py -a 1
+
+# 指定第 1、3、5 个账号打卡
+python main.py -a 1 3 5
 
 # 指定截图保存到当前目录
 python main.py -o .

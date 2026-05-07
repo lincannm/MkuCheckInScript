@@ -26,6 +26,8 @@ parser.add_argument("-d", "--debug", action="store_true", help="启用调试日�
 parser.add_argument("-c", "--only-checkin", action="store_true", help="仅打卡")
 parser.add_argument("-s", "--only-screenshot", action="store_true", help="仅截图打卡记录")
 parser.add_argument("-y", action="store_true", help="选中账号后直接打卡，跳过询问")
+parser.add_argument("-a", "--accounts", type=int, nargs="+",
+                    help="指定要处理的账号序号，支持多个，例如：-a 1 3 5")
 parser.add_argument("-o", "--output", type=str,
                     default=os.path.join(os.path.expanduser("~"), "Desktop"),
                     help="截图保存目录（默认：桌面）")
@@ -166,6 +168,27 @@ def select_accounts(accounts: list[dict]) -> list[dict]:
 
         except Exception as e:
             print(f"发生错误：{e}，请重新输入")
+
+def select_accounts_by_indices(accounts: list[dict], indices: list[int]) -> list[dict]:
+    """根据命令行传入的序号选择账号，支持去重并保持输入顺序"""
+    if not indices:
+        print("账号序号不能为空")
+        sys.exit(1)
+
+    invalid_indices = [i for i in indices if i < 1 or i > len(accounts)]
+    if invalid_indices:
+        invalid_text = " ".join(str(i) for i in invalid_indices)
+        print(f"账号序号超出范围: {invalid_text}，有效范围为 1-{len(accounts)}")
+        sys.exit(1)
+
+    unique_indices = list(dict.fromkeys(indices))
+    selected_accounts = [accounts[i - 1] for i in unique_indices]
+
+    print(f"\n已通过启动参数选择 {len(selected_accounts)} 个账号：")
+    for index, acc in zip(unique_indices, selected_accounts):
+        print(f"  {index}. {acc['name']} ({acc['username']})")
+
+    return selected_accounts
 
 def validate_account_data(name: str, username: str, password: str) -> tuple[bool, str]:
     """
@@ -776,7 +799,10 @@ def main():
 
     # 加载并选择账号（支持多选）
     accounts = load_accounts()
-    selected_accounts = select_accounts(accounts)
+    if args.accounts:
+        selected_accounts = select_accounts_by_indices(accounts, args.accounts)
+    else:
+        selected_accounts = select_accounts(accounts)
 
     # 显示将要处理的账号数量
     print(f"\n将为 {len(selected_accounts)} 个账号执行操作\n")
