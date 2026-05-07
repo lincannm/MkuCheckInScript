@@ -13,21 +13,10 @@
 
 ### 1. 安装依赖
 
-#### uv
-
-本项目使用uv管理依赖。
+使用 pip 从 `pyproject.toml` 安装依赖：
 
 ```shell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-uv sync
-```
-
-#### pip
-
-也可以用pip从requirements.txt安装依赖
-
-```shell
-pip install -r requirements.txt
+python -m pip install .
 ```
 
 ### 2. 为Playwright安装浏览器（截图功能需要）
