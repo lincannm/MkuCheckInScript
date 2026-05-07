@@ -2,3 +2,6 @@
 CLAUDE.md
 screenshot/
 accounts.json
+.claude/
+.idea/
+AGENTS.md
