@@ -25,7 +25,8 @@ parser = argparse.ArgumentParser(description="MKU 学工系统自动打卡脚本
 parser.add_argument("-d", "--debug", action="store_true", help="启用调试日志输出")
 parser.add_argument("-c", "--only-checkin", action="store_true", help="仅打卡")
 parser.add_argument("-s", "--only-screenshot", action="store_true", help="仅截图打卡记录")
-parser.add_argument("-y", action="store_true", help="选中账号后直接打卡，跳过询问")
+parser.add_argument("-p", "--prompt", action="store_true",
+                    help="选中账号后先询问确认再打卡（默认不询问）")
 parser.add_argument("-a", "--accounts", type=int, nargs="+",
                     help="指定要处理的账号序号，支持多个，例如：-a 1 3 5")
 parser.add_argument("-o", "--output", type=str,
@@ -625,13 +626,7 @@ def check_in(session: requests.Session):
         "jzkid": 1                      # 健康状态ID，1可能表示"正常"或"健康"
     }
     logger.debug(f"form_data = {form_data}")
-    if not args.y:
-        is_want_to_sign=get_choose(f"今天日期：{sbrq}\n是否要打卡？")
-        if not is_want_to_sign:
-            print("用户取消打卡，结束程序")
-            sys.exit(0)
-    else:
-        print(f"今天日期：{sbrq}")
+    print(f"今天日期：{sbrq}")
     resp_mrdk_save=session.post("https://xgyd.mku.edu.cn/acmc-weichat/wxapp/swkjjksb/mrdk_save.do",
                                 data=form_data)
     resp_mrdk_save_data=resp_mrdk_save.json()
@@ -806,6 +801,13 @@ def main():
 
     # 显示将要处理的账号数量
     print(f"\n将为 {len(selected_accounts)} 个账号执行操作\n")
+
+    # -p/--prompt：选中账号后先整批询问确认，不直接打卡
+    if args.prompt and not args.only_screenshot:
+        today_str = date.today().strftime('%Y-%m-%d')
+        if not get_choose(f"今天日期：{today_str}\n确认对以上 {len(selected_accounts)} 个账号执行打卡？"):
+            print("用户取消打卡，结束程序")
+            sys.exit(0)
 
     # 批量处理账号
     results = []
